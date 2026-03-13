@@ -94,6 +94,19 @@ public class EpisodeMappingService
             // BUT: Only do this if no other regular season already occupies S1,
             // to avoid collisions when there are two regular seasons (SeqNum=0 and SeqNum=1).
             int jellyfinSeasonNum = season.SeasonSequenceNumber;
+
+            // NEW: Try to extract the true season number from the Title (e.g., "Season 3", "Temporada 3")
+            if (!string.IsNullOrEmpty(season.Title))
+            {
+                var titleMatch = System.Text.RegularExpressions.Regex.Match(season.Title, @"(?i)(?:season|temporada)\s*(\d+)\b");
+                if (titleMatch.Success && int.TryParse(titleMatch.Groups[1].Value, out int extractedSeason))
+                {
+                    jellyfinSeasonNum = extractedSeason;
+                    _logger.LogDebug(
+                        "Season '{Title}' matched regex, overriding Jellyfin season number from {Original} to {Extracted}",
+                        season.Title, season.SeasonSequenceNumber, extractedSeason);
+                }
+            }
             if (jellyfinSeasonNum == 0)
             {
                 bool s1AlreadyTaken = sortedSeasons.Any(s =>

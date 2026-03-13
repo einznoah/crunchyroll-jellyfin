@@ -99,3 +99,7 @@
 
 - Season matching specific fix using SeasonSequenceNumber
 - Episodes now preserve Jellyfin's IndexNumber for compatibility
+
+## [2.3.0.1] - 2026-03-13
+### Fixed
+- **Episode Mapping**: Fixed an issue where irregular season structures with missing sequential IDs (such as *Jujutsu Kaisen* Season 3 / Culling Game) would fail to map automatically. The plugin now includes an improved regex fallback that successfully maps non-sequential `SeasonSequenceNumber` items directly from their string titles.

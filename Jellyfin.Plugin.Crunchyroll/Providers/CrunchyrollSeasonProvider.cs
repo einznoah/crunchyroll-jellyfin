@@ -205,7 +205,13 @@ public class CrunchyrollSeasonProvider : IRemoteMetadataProvider<Season, SeasonI
 
         // Match by SeasonSequenceNumber directly (not by position!)
         // This fixes Issue #2: Jellyfin S2 -> Crunchyroll S2, even if S1 is missing
-        var matchedSeason = preferredSeasons.FirstOrDefault(s => s.SeasonSequenceNumber == jellyfinSeasonNumber);
+        var matchedSeason = preferredSeasons.FirstOrDefault(s => {
+            if (!string.IsNullOrEmpty(s.Title)) {
+                var tm = System.Text.RegularExpressions.Regex.Match(s.Title, @"(?i)(?:season|temporada)\s*(\d+)\b");
+                if (tm.Success && int.TryParse(tm.Groups[1].Value, out int es) && es == jellyfinSeasonNumber) return true;
+            }
+            return s.SeasonSequenceNumber == jellyfinSeasonNumber;
+        });
 
         if (matchedSeason != null)
         {
@@ -276,6 +282,33 @@ public class CrunchyrollSeasonProvider : IRemoteMetadataProvider<Season, SeasonI
             _logger.LogDebug(
                 "Matched Season {JellyfinSeason} via SeasonNumber (not SeasonSequenceNumber) to: {Title}",
                 jellyfinSeasonNumber, matchedSeason.Title);
+            return matchedSeason;
+        }
+
+        // --- NEW LOGIC FOR INCONSISTENT SEASON NUMBERS ---
+        // If we haven't found a match yet, try parsing the Season title directly (e.g. "Season 3")
+        var titleMatchPattern = new System.Text.RegularExpressions.Regex($@"(?i)(season|temporada)\s*{jellyfinSeasonNumber}\b");
+        matchedSeason = preferredSeasons.FirstOrDefault(s => s.Title != null && titleMatchPattern.IsMatch(s.Title));
+        if (matchedSeason != null)
+        {
+            _logger.LogDebug(
+                "Matched Season {JellyfinSeason} via Title keyword match: '{Title}' (SeqNum={SeqNum}, Num={Num})",
+                jellyfinSeasonNumber, matchedSeason.Title, matchedSeason.SeasonSequenceNumber, matchedSeason.SeasonNumber);
+            return matchedSeason;
+        }
+
+        // Furthermore, try mapping by logical sequence skipping specials
+        var mainSeasons = preferredSeasons
+            .Where(s => !HasSpecialKeyword(s.Title) && s.NumberOfEpisodes > 1)
+            .OrderBy(s => s.SeasonSequenceNumber)
+            .ToList();
+
+        if (jellyfinSeasonNumber >= 1 && jellyfinSeasonNumber <= mainSeasons.Count)
+        {
+            matchedSeason = mainSeasons[jellyfinSeasonNumber - 1];
+            _logger.LogDebug(
+                "Matched Season {JellyfinSeason} via logical linear grouping: '{Title}' (SeqNum={SeqNum}, Num={Num})",
+                jellyfinSeasonNumber, matchedSeason.Title, matchedSeason.SeasonSequenceNumber, matchedSeason.SeasonNumber);
             return matchedSeason;
         }
 
