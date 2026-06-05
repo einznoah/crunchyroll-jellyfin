@@ -23,19 +23,19 @@ public class CrunchyrollAuthResponse
     /// Gets or sets the token type (usually "Bearer").
     /// </summary>
     [JsonPropertyName("token_type")]
-    public required string TokenType { get; init; }
+    public string? TokenType { get; init; }
 
     /// <summary>
     /// Gets or sets the scope of the token.
     /// </summary>
     [JsonPropertyName("scope")]
-    public required string Scope { get; init; }
+    public string? Scope { get; init; }
 
     /// <summary>
     /// Gets or sets the country code.
     /// </summary>
     [JsonPropertyName("country")]
-    public required string Country { get; init; }
+    public string? Country { get; init; }
 
     /// <summary>
     /// Gets or sets the refresh token for renewing access without re-login.

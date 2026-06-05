@@ -572,7 +572,7 @@ if 'crunchyroll' not in h:
     ws.recv()
     import time
     time.sleep(5)
-js=""""""(async()=>{try{const r=await fetch('/auth/v1/token',{method:'POST',headers:{'Authorization':'Basic bmR0aTZicXlqcm9wNXZnZjF0dnU6elpIcS00SEJJVDlDb2FMcnBPREJjRVRCTUNHai1QNlg=','Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=client_id&device_id='+crypto.randomUUID()});const d=await r.json();return JSON.stringify({access_token:d.access_token,token_type:d.token_type,expires_in:d.expires_in,country:d.country})}catch(e){return JSON.stringify({error:e.message})}})()""""""
+js=""""""(async()=>{try{const r=await fetch('/auth/v1/token',{method:'POST',headers:{'Authorization':'Basic bmR0aTZicXlqcm9wNXZnZjF0dnU6elpIcS00SEJJVDlDb2FMcnBPREJjRVRCTUNHai1QNlg=','Content-Type':'application/x-www-form-urlencoded'},body:'grant_type=client_id&device_id='+crypto.randomUUID()});const d=await r.json();return JSON.stringify({access_token:d.access_token,token_type:d.token_type,expires_in:d.expires_in,scope:d.scope,country:d.country})}catch(e){return JSON.stringify({error:e.message})}})()""""""
 ws.send(json.dumps({'id':3,'method':'Runtime.evaluate','params':{'expression':js,'awaitPromise':True,'returnByValue':True}}))
 r=json.loads(ws.recv())
 v=r.get('result',{}).get('result',{}).get('value','{}')

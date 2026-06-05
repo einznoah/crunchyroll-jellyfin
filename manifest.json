@@ -8,13 +8,6 @@
     "category": "Metadata Provider",
     "versions": [
       {
-        "version": "2.3.0.1",
-        "changelog": "Fixed an issue where non-sequential seasons or irregular season bumps (e.g. Jujutsu Kaisen Culling Game) failed to map correctly. The plugin now falls back to regex matching from the title.",
-        "checksum": "",
-        "timestamp": "2026-03-13T16:55:28Z",
-        "sourceUrl": "https://github.com/ocnaibill/crunchyroll-jellyfin/releases/download/v2.3.0.1/Jellyfin.Plugin.Crunchyroll.zip"
-      },
-      {
         "version": "2.3.0.0",
         "changelog": "NEW: Movie library support! Crunchyroll now provides metadata for anime movies. Uses a multi-level matching algorithm (L1-Direct, L2-Cascade with distinctive word scoring, L1-Fallback) to handle all three film patterns on Crunchyroll: standalone films, films as seasons inside parent anime, and film collections. Also improved NormalizeName to handle slashes, Unicode dashes, and parentheses in series/movie titles.",
         "checksum": "2d619d23586d9fda812a5e1ed4c182b2",

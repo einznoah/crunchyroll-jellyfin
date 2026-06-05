@@ -106,6 +106,20 @@ public class EpisodeMappingService
                         "Season '{Title}' matched regex, overriding Jellyfin season number from {Original} to {Extracted}",
                         season.Title, season.SeasonSequenceNumber, extractedSeason);
                 }
+                else if (season.Title.Contains("Culling", StringComparison.OrdinalIgnoreCase) || season.Title.Contains("Jogo do Abate", StringComparison.OrdinalIgnoreCase))
+                {
+                    jellyfinSeasonNum = 3;
+                    _logger.LogDebug(
+                        "Season '{Title}' matched 'Culling Game/Jogo do Abate', overriding Jellyfin season number from {Original} to 3",
+                        season.Title, season.SeasonSequenceNumber);
+                }
+                else if (season.Title.Contains("Shibuya", StringComparison.OrdinalIgnoreCase) || season.Title.Contains("Hidden Inventory", StringComparison.OrdinalIgnoreCase) || season.Title.Contains("Inventário", StringComparison.OrdinalIgnoreCase))
+                {
+                    jellyfinSeasonNum = 2;
+                    _logger.LogDebug(
+                        "Season '{Title}' matched 'Shibuya/Hidden Inventory', overriding Jellyfin season number from {Original} to 2",
+                        season.Title, season.SeasonSequenceNumber);
+                }
             }
             if (jellyfinSeasonNum == 0)
             {
@@ -141,7 +155,7 @@ public class EpisodeMappingService
 
             mapping.Seasons.Add(entry);
 
-            _logger.LogDebug(
+            _logger.LogInformation(
                 "Season mapping: Jellyfin S{JellyfinSeason} -> Crunchyroll S{CrunchyrollSeason} seq={SeqNum} ({Title}), Offset: {Offset}",
                 jellyfinSeasonNum,
                 season.SeasonNumber,
@@ -332,7 +346,7 @@ public class EpisodeMappingService
         // Calculate the expected Crunchyroll episode number
         int expectedCrunchyrollEpisode = jellyfinEpisodeNumber + seasonEntry.EpisodeOffset;
 
-        _logger.LogDebug(
+        _logger.LogInformation(
             "Expected Crunchyroll episode: {Expected} (Jellyfin {JellyfinEp} + offset {Offset})",
             expectedCrunchyrollEpisode,
             jellyfinEpisodeNumber,

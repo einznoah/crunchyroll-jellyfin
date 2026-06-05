@@ -38,7 +38,7 @@ public class CrunchyrollEpisodeProvider : IRemoteMetadataProvider<Episode, Episo
     /// <inheritdoc />
     public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Searching for S{Season}E{Episode} : {Name}", info.ParentIndexNumber, info.IndexNumber, info.Name);
+        _logger.LogInformation("Searching for S{Season}E{Episode} : {Name}", info.ParentIndexNumber, info.IndexNumber, info.Name);
         var result = new MetadataResult<Episode>();
 
         var config = Plugin.Instance?.Configuration;
@@ -62,9 +62,9 @@ public class CrunchyrollEpisodeProvider : IRemoteMetadataProvider<Episode, Episo
 
         // Get all seasons and episodes
         var seasons = await apiClient.GetSeasonsAsync(seriesId, cancellationToken).ConfigureAwait(false);
-        if (seasons.Count == 0 || null == seasons.FirstOrDefault(s => s.SeasonSequenceNumber == info.ParentIndexNumber))
+        if (seasons.Count == 0)
         {
-            _logger.LogDebug("Season not found");
+            _logger.LogDebug("No seasons found for series");
             return result;
         }
 
@@ -105,7 +105,7 @@ public class CrunchyrollEpisodeProvider : IRemoteMetadataProvider<Episode, Episo
 
             if (matchResult.Success && matchResult.Episode != null)
             {
-                _logger.LogDebug(
+                _logger.LogInformation(
                     "Matched Jellyfin S{JellyfinS}E{JellyfinE} to Crunchyroll episode '{Title}' (Confidence: {Confidence}%)",
                     jellyfinSeason,
                     jellyfinEpisode,

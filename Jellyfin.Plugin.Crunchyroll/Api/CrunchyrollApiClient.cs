@@ -939,7 +939,20 @@ public class CrunchyrollApiClient : IDisposable
                 ["Authorization"] = $"Basic {BasicAuthToken}",
                 ["Content-Type"] = "application/x-www-form-urlencoded"
             };
-            var body = $"grant_type=client_id&device_id={deviceId}";
+
+            // Use password grant when credentials are available, otherwise anonymous
+            bool isUserAuth = !string.IsNullOrEmpty(_username) && !string.IsNullOrEmpty(_password);
+            string body;
+            if (isUserAuth)
+            {
+                _logger.LogDebug("[CDP Auth] Using password grant with configured credentials");
+                body = $"grant_type=password&username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}"
+                     + $"&device_id={deviceId}&device_type=com.crunchyroll.android.google&scope=offline_access";
+            }
+            else
+            {
+                body = $"grant_type=client_id&device_id={deviceId}";
+            }
 
             var json = await _flareSolverrClient.CdpFetchJsonAsync(
                 _dockerContainerName,
@@ -956,12 +969,20 @@ public class CrunchyrollApiClient : IDisposable
                 return null;
             }
 
-            // Parse the auth response
+            // Check for JS-level errors (e.g., fetch() threw, NetworkError, etc.)
+            if (json.Contains("\"error\""))
+            {
+                var errPreview = json.Length > 500 ? json[..500] : json;
+                _logger.LogWarning("[CDP Auth] CDP returned an error response: {Error}", errPreview);
+                return null;
+            }
+
+            // Parse the auth response (now with relaxed required fields)
             var authResponse = JsonSerializer.Deserialize<CrunchyrollAuthResponse>(json);
             if (authResponse == null || string.IsNullOrEmpty(authResponse.AccessToken))
             {
-                _logger.LogWarning("[CDP Auth] Invalid auth response: {Json}",
-                    json.Length > 200 ? json[..200] : json);
+                var jsonPreview = json.Length > 500 ? json[..500] : json;
+                _logger.LogWarning("[CDP Auth] Invalid auth response (no access_token). Raw JSON: {Json}", jsonPreview);
                 return null;
             }
 
@@ -974,7 +995,8 @@ public class CrunchyrollApiClient : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[CDP Auth] Error during authentication");
+            _logger.LogError(ex, "[CDP Auth] Error during {Mode} authentication",
+                !string.IsNullOrEmpty(_username) && !string.IsNullOrEmpty(_password) ? "User (password grant)" : "Anonymous (client_id)");
             return null;
         }
         finally
