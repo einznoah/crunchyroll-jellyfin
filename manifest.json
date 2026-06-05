@@ -10,8 +10,8 @@
       {
         "version": "2.3.1.0",
         "changelog": "🔐 CDP Auth Overhaul: Password grant support — the plugin now uses your configured Crunchyroll credentials when authenticating via Chrome DevTools Protocol (previously always anonymous). Fixed JsonException crash when API returns tokens without scope/country fields (relaxed required fields in auth model). Added missing 'scope' field to CDP auth JavaScript. Enhanced error logging with 500-char JSON preview and JS-level error detection.\n\n🐛 Jujutsu Kaisen S3 Mapping: Regex-based detection for irregular season bumps — 'Culling Game'/'Jogo do Abate' → Season 3, 'Shibuya'/'Hidden Inventory'/'Inventário' → Season 2. Fixes episodes failing to match when Crunchyroll's season_sequence_number doesn't align with actual season order.\n\n🔧 Manifest: Removed broken v2.3.0.1 entry pointing to non-existent release ZIP (fixes installation failure #10).\n\n📊 Diagnostics: Episode and season mapping logs upgraded from Debug to Information level for easier troubleshooting. Auth error logs now indicate which grant type was used (anonymous vs password).\n\n🛠️ Build: Fixed ScraperTest CI failures — added missing source files and removed duplicate Main() entry point.",
-        "checksum": "",
-        "timestamp": "2026-06-05T12:00:00Z",
+        "checksum": "0613038d189dd563424e28ceec4a2178",
+        "timestamp": "2026-06-05T11:41:20Z",
         "sourceUrl": "https://github.com/ocnaibill/crunchyroll-jellyfin/releases/download/v2.3.1.0/Jellyfin.Plugin.Crunchyroll.zip"
       },
       {
