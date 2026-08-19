@@ -19,11 +19,54 @@ public class CrunchyrollApiClient : IDisposable
     private const string ApiBaseUrl = "https://www.crunchyroll.com/content/v2";
     
     /// <summary>
-    /// Basic authentication token (from crunchyroll-rs Android TV client).
-    /// This token is used for OAuth2 authentication with Crunchyroll.
+    /// Basic authentication tokens (base64 of "client_id:client_secret") used for OAuth2
+    /// authentication with Crunchyroll, tried in order.
+    /// Crunchyroll deactivates clients over time (the endpoint then answers 401
+    /// "auth.obtain_access_token.client_inactive"), so the first client that authenticates
+    /// wins and is remembered in <see cref="_basicAuthTokenIndex"/> for later calls.
     /// </summary>
-    private const string BasicAuthToken = "bmR0aTZicXlqcm9wNXZnZjF0dnU6elpIcS00SEJJVDlDb2FMcnBPREJjRVRCTUNHai1QNlg=";
-    
+    private static readonly string[] BasicAuthTokens =
+    {
+        // cr_web — Crunchyroll web player client (no secret). Anonymous grant only.
+        "Y3Jfd2ViOg==",
+        // Legacy web client. Anonymous grant only.
+        "bm9haWhkZXZtXzZpeWcwYThsMHE6",
+        // crunchyroll-rs Android TV client — deactivated by Crunchyroll, kept as last resort.
+        "bmR0aTZicXlqcm9wNXZnZjF0dnU6elpIcS00SEJJVDlDb2FMcnBPREJjRVRCTUNHai1QNlg=",
+    };
+
+    /// <summary>
+    /// Index of the client credentials that last authenticated successfully.
+    /// </summary>
+    private static int _basicAuthTokenIndex;
+
+    /// <summary>
+    /// Set once every known client has rejected the password grant, so later logins
+    /// go straight to the anonymous grant instead of retrying a dead flow.
+    /// </summary>
+    private static bool _passwordGrantUnavailable;
+
+    /// <summary>
+    /// Outcome of a single token request against one client + grant combination.
+    /// </summary>
+    private enum AuthAttemptResult
+    {
+        /// <summary>Token obtained and stored.</summary>
+        Success,
+
+        /// <summary>The client credentials or the grant were rejected; another combination may work.</summary>
+        ClientRejected,
+
+        /// <summary>The user's credentials are wrong; retrying is pointless.</summary>
+        InvalidCredentials,
+
+        /// <summary>Cloudflare blocked the request (403/429).</summary>
+        Blocked,
+
+        /// <summary>Any other failure.</summary>
+        Failed
+    }
+
     // Simplified User-Agent (matches Python implementation - less fingerprint surface)
     private const string UserAgent = "Crunchyroll/3.50.2";
     
@@ -151,7 +194,9 @@ public class CrunchyrollApiClient : IDisposable
     }
 
     /// <summary>
-    /// Attempts authentication with Crunchyroll (Anonymous or User).
+    /// Attempts authentication with Crunchyroll (Refresh, User or Anonymous).
+    /// Each grant is tried against every known client until one is accepted, because
+    /// Crunchyroll periodically deactivates clients and restricts which grants they may use.
     /// </summary>
     /// <returns>True if authentication succeeded, false if blocked by Cloudflare.</returns>
     private async Task<bool> TryAuthenticateAsync(CancellationToken cancellationToken)
@@ -169,135 +214,189 @@ public class CrunchyrollApiClient : IDisposable
         bool isUserAuth = !string.IsNullOrEmpty(_username) && !string.IsNullOrEmpty(_password);
         _logger.LogDebug("Authenticating with Crunchyroll ({Mode})", isUserAuth ? "User" : "Anonymous");
 
+        // First, make an initial call to the Crunchyroll page to avoid bot detection
         try
         {
-            // First, make an initial call to the Crunchyroll page to avoid bot detection
-            try
+            var initialResponse = await _httpClient.GetAsync(BaseUrl, cancellationToken).ConfigureAwait(false);
+            if (!initialResponse.IsSuccessStatusCode)
             {
-                var initialResponse = await _httpClient.GetAsync(BaseUrl, cancellationToken).ConfigureAwait(false);
-                if (!initialResponse.IsSuccessStatusCode)
+                _logger.LogWarning("Initial Crunchyroll request returned {StatusCode}", initialResponse.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to make initial Crunchyroll request");
+        }
+
+        // Grant order:
+        // 1. refresh_token, when a previous login handed us one
+        // 2. password, when the user configured credentials (unless already known to be dead)
+        // 3. client_id (anonymous) — enough for all public metadata
+        var grants = new List<string>();
+        if (!string.IsNullOrEmpty(_refreshToken))
+        {
+            grants.Add("refresh_token");
+        }
+
+        if (isUserAuth && !_passwordGrantUnavailable)
+        {
+            grants.Add("password");
+        }
+
+        grants.Add("client_id");
+
+        foreach (var grant in grants)
+        {
+            // Start with the client that worked last time, then walk the rest of the list.
+            for (int offset = 0; offset < BasicAuthTokens.Length; offset++)
+            {
+                var index = (_basicAuthTokenIndex + offset) % BasicAuthTokens.Length;
+                var result = await TryAuthenticateWithClientAsync(BasicAuthTokens[index], grant, cancellationToken)
+                    .ConfigureAwait(false);
+
+                switch (result)
                 {
-                    _logger.LogWarning("Initial Crunchyroll request returned {StatusCode}", initialResponse.StatusCode);
+                    case AuthAttemptResult.Success:
+                        _basicAuthTokenIndex = index;
+                        return true;
+
+                    case AuthAttemptResult.ClientRejected:
+                        // This client cannot serve this grant (deactivated or grant not allowed) — try the next one.
+                        continue;
+
+                    case AuthAttemptResult.InvalidCredentials:
+                        _logger.LogError("Crunchyroll Login Failed: Invalid Credentials. Please check your Email and Password in the plugin configuration.");
+                        return false;
+
+                    case AuthAttemptResult.Blocked:
+                        return await HandleCloudflareBlockAsync(cancellationToken).ConfigureAwait(false);
+
+                    default:
+                        return false;
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to make initial Crunchyroll request");
-            }
 
-            // Prepare authentication request
+            // Every client rejected this grant — remember it so we stop retrying a dead flow.
+            if (grant == "refresh_token")
+            {
+                _logger.LogWarning("Refresh token expired or invalid, clearing and retrying with full login");
+                _refreshToken = null;
+            }
+            else if (grant == "password")
+            {
+                _passwordGrantUnavailable = true;
+                _logger.LogWarning("Crunchyroll rejected the password grant for every known client. " +
+                                   "Falling back to anonymous access — public metadata still works, " +
+                                   "but premium-only titles will be unavailable.");
+            }
+        }
+
+        _logger.LogError("Crunchyroll authentication failed: no client/grant combination was accepted.");
+        return false;
+    }
+
+    /// <summary>
+    /// Performs one token request for a specific client and grant type.
+    /// </summary>
+    /// <param name="basicAuthToken">Base64 "client_id:client_secret" credentials.</param>
+    /// <param name="grantType">One of "refresh_token", "password" or "client_id".</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The outcome of the attempt.</returns>
+    private async Task<AuthAttemptResult> TryAuthenticateWithClientAsync(string basicAuthToken, string grantType, CancellationToken cancellationToken)
+    {
+        try
+        {
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/auth/v1/token");
             request.Headers.Accept.Clear();
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            
-            // Both flows use the same Basic Token and ETP header
+
+            // All flows use a Basic Token and the ETP header
             var deviceId = Guid.NewGuid().ToString();
-            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", BasicAuthToken);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basicAuthToken);
             request.Headers.Add("ETP-Anonymous-ID", deviceId);
-            
-            // Determine authentication mode:
-            // 1. If we have a refresh token, try to use it first
-            // 2. If user credentials provided, use password grant
-            // 3. Otherwise, use anonymous client_id grant
-            bool useRefreshToken = !string.IsNullOrEmpty(_refreshToken);
-            
-            if (useRefreshToken)
+
+            switch (grantType)
             {
-                _logger.LogDebug("Attempting token refresh with existing refresh_token");
-                request.Content = new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string, string>("refresh_token", _refreshToken!),
-                    new KeyValuePair<string, string>("grant_type", "refresh_token"),
-                    new KeyValuePair<string, string>("scope", "offline_access"),
-                    new KeyValuePair<string, string>("device_id", deviceId)
-                });
-            }
-            else if (isUserAuth)
-            {
-                request.Content = new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string, string>("username", _username),
-                    new KeyValuePair<string, string>("password", _password),
-                    new KeyValuePair<string, string>("grant_type", "password"),
-                    new KeyValuePair<string, string>("scope", "offline_access"),
-                    new KeyValuePair<string, string>("device_id", deviceId),
-                    new KeyValuePair<string, string>("device_type", "com.crunchyroll.android.google")
-                });
-            }
-            else
-            {
-                request.Content = new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string, string>("grant_type", "client_id"),
-                    new KeyValuePair<string, string>("device_id", deviceId),
-                    new KeyValuePair<string, string>("device_type", "com.crunchyroll.android.google")
-                });
+                case "refresh_token":
+                    _logger.LogDebug("Attempting token refresh with existing refresh_token");
+                    request.Content = new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("refresh_token", _refreshToken!),
+                        new KeyValuePair<string, string>("grant_type", "refresh_token"),
+                        new KeyValuePair<string, string>("scope", "offline_access"),
+                        new KeyValuePair<string, string>("device_id", deviceId)
+                    });
+                    break;
+
+                case "password":
+                    request.Content = new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("username", _username),
+                        new KeyValuePair<string, string>("password", _password),
+                        new KeyValuePair<string, string>("grant_type", "password"),
+                        new KeyValuePair<string, string>("scope", "offline_access"),
+                        new KeyValuePair<string, string>("device_id", deviceId),
+                        new KeyValuePair<string, string>("device_type", "com.crunchyroll.android.google")
+                    });
+                    break;
+
+                default:
+                    request.Content = new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("grant_type", "client_id"),
+                        new KeyValuePair<string, string>("device_id", deviceId),
+                        new KeyValuePair<string, string>("device_type", "com.crunchyroll.android.google")
+                    });
+                    break;
             }
 
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                
-                // If refresh token failed, clear it and try again with full login
-                if (useRefreshToken && (response.StatusCode == System.Net.HttpStatusCode.BadRequest || 
-                                        response.StatusCode == System.Net.HttpStatusCode.Unauthorized))
-                {
-                    _logger.LogWarning("Refresh token expired or invalid, clearing and retrying with full login");
-                    _refreshToken = null;
-                    return await TryAuthenticateAsync(cancellationToken).ConfigureAwait(false);
-                }
-                
-                // Check if blocked by Cloudflare (403 Forbidden is the standard indicator)
-                // Also handle 429 TooManyRequests which Cloudflare uses for rate limiting bans (Error 1015)
-                if (response.StatusCode == System.Net.HttpStatusCode.Forbidden || 
-                    response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+
+                // Cloudflare block (403, or 429 for rate limiting bans / Error 1015)
+                if (response.StatusCode == HttpStatusCode.Forbidden ||
+                    response.StatusCode == HttpStatusCode.TooManyRequests)
                 {
                     _logger.LogWarning("Crunchyroll API authentication returned {StatusCode} (likely Cloudflare block).", response.StatusCode);
-                    
-                    // Try to bypass Cloudflare using FlareSolverr cookies before giving up
-                    if (HasFlareSolverr && !_cfCookiesApplied)
-                    {
-                        _logger.LogInformation("Attempting Cloudflare bypass via FlareSolverr cookies...");
-                        var cfResult = await TryApplyCloudflareCookiesAsync(cancellationToken).ConfigureAwait(false);
-                        if (cfResult)
-                        {
-                            _logger.LogInformation("CF cookies applied. Retrying authentication...");
-                            _lastAuthAttempt = DateTime.MinValue; // Reset rate limit for retry
-                            return await TryAuthenticateAsync(cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                    
-                    _logger.LogWarning("Switching to scraping/proxy mode.");
-                    _useScrapingMode = true;
-                    
-                    if (!HasFlareSolverr)
-                    {
-                        _logger.LogWarning("Cloudflare block detected but FlareSolverr URL is not configured. Please configure FlareSolverr URL in the plugin settings to enable fallback.");
-                    }
-                    
-                    return false;
+                    return AuthAttemptResult.Blocked;
                 }
 
-                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized && errorContent.Contains("invalid_grant"))
+                // Wrong username/password — no other client will help
+                if (response.StatusCode == HttpStatusCode.Unauthorized && errorContent.Contains("invalid_grant"))
                 {
-                    _logger.LogError("Crunchyroll Login Failed: Invalid Credentials. Please check your Email and Password in the plugin configuration.");
-                    return false;
+                    return AuthAttemptResult.InvalidCredentials;
                 }
-                
-                _logger.LogError("Crunchyroll authentication failed with status {StatusCode}: {Error}", 
+
+                // Client deactivated ("client_inactive"), unknown, or not allowed to use this grant
+                if (errorContent.Contains("invalid_client") || errorContent.Contains("unsupported_grant_type"))
+                {
+                    _logger.LogDebug("Crunchyroll rejected client for grant {Grant} ({StatusCode}): {Error}",
+                        grantType, response.StatusCode, errorContent);
+                    return AuthAttemptResult.ClientRejected;
+                }
+
+                // A stale refresh token also invalidates this attempt, but not the client
+                if (grantType == "refresh_token" && response.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    _logger.LogDebug("Refresh token rejected ({StatusCode}): {Error}", response.StatusCode, errorContent);
+                    return AuthAttemptResult.ClientRejected;
+                }
+
+                _logger.LogError("Crunchyroll authentication failed with status {StatusCode}: {Error}",
                     response.StatusCode, errorContent);
-                return false;
+                return AuthAttemptResult.Failed;
             }
 
             var authResponse = await response.Content.ReadFromJsonAsync<CrunchyrollAuthResponse>(cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
 
-            if (authResponse == null)
+            if (authResponse == null || string.IsNullOrEmpty(authResponse.AccessToken))
             {
                 _logger.LogError("Failed to deserialize Crunchyroll auth response");
-                return false;
+                return AuthAttemptResult.Failed;
             }
 
             _accessToken = authResponse.AccessToken;
@@ -306,19 +405,51 @@ public class CrunchyrollApiClient : IDisposable
             {
                 _refreshToken = authResponse.RefreshToken;
             }
+
             // Set expiration with 60 seconds buffer
             _tokenExpiration = DateTime.UtcNow.AddSeconds(authResponse.ExpiresIn - 60);
 
-            _logger.LogInformation("Successfully authenticated with Crunchyroll as {Mode} (Country: {Country})", 
-                useRefreshToken ? "Refresh" : (isUserAuth ? "User" : "Anonymous"), authResponse.Country);
-            
-            return true;
+            _logger.LogInformation("Successfully authenticated with Crunchyroll as {Mode} (Country: {Country})",
+                grantType == "refresh_token" ? "Refresh" : (grantType == "password" ? "User" : "Anonymous"),
+                authResponse.Country);
+
+            return AuthAttemptResult.Success;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during Crunchyroll authentication");
-            return false;
+            return AuthAttemptResult.Failed;
         }
+    }
+
+    /// <summary>
+    /// Handles a Cloudflare block during authentication: retries once with FlareSolverr
+    /// cookies when available, otherwise switches to scraping/proxy mode.
+    /// </summary>
+    private async Task<bool> HandleCloudflareBlockAsync(CancellationToken cancellationToken)
+    {
+        // Try to bypass Cloudflare using FlareSolverr cookies before giving up
+        if (HasFlareSolverr && !_cfCookiesApplied)
+        {
+            _logger.LogInformation("Attempting Cloudflare bypass via FlareSolverr cookies...");
+            var cfResult = await TryApplyCloudflareCookiesAsync(cancellationToken).ConfigureAwait(false);
+            if (cfResult)
+            {
+                _logger.LogInformation("CF cookies applied. Retrying authentication...");
+                _lastAuthAttempt = DateTime.MinValue; // Reset rate limit for retry
+                return await TryAuthenticateAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        _logger.LogWarning("Switching to scraping/proxy mode.");
+        _useScrapingMode = true;
+
+        if (!HasFlareSolverr)
+        {
+            _logger.LogWarning("Cloudflare block detected but FlareSolverr URL is not configured. Please configure FlareSolverr URL in the plugin settings to enable fallback.");
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -933,65 +1064,109 @@ public class CrunchyrollApiClient : IDisposable
             // This bypasses Cloudflare's TLS fingerprinting because Chrome makes the request
             // directly, not our .NET HttpClient. The token obtained is a standard JWT
             // that can be used for subsequent API calls (also via CDP).
-            var deviceId = Guid.NewGuid().ToString();
-            var headers = new Dictionary<string, string>
-            {
-                ["Authorization"] = $"Basic {BasicAuthToken}",
-                ["Content-Type"] = "application/x-www-form-urlencoded"
-            };
-
-            // Use password grant when credentials are available, otherwise anonymous
+            // Grants and clients are tried in the same order as the direct HTTP path, since
+            // Crunchyroll deactivates clients and restricts which grants they may use.
             bool isUserAuth = !string.IsNullOrEmpty(_username) && !string.IsNullOrEmpty(_password);
-            string body;
-            if (isUserAuth)
+
+            var grants = new List<string>();
+            if (isUserAuth && !_passwordGrantUnavailable)
             {
-                _logger.LogDebug("[CDP Auth] Using password grant with configured credentials");
-                body = $"grant_type=password&username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}"
-                     + $"&device_id={deviceId}&device_type=com.crunchyroll.android.google&scope=offline_access";
-            }
-            else
-            {
-                body = $"grant_type=client_id&device_id={deviceId}";
+                grants.Add("password");
             }
 
-            var json = await _flareSolverrClient.CdpFetchJsonAsync(
-                _dockerContainerName,
-                "/auth/v1/token",
-                "POST",
-                headers,
-                body,
-                cancellationToken).ConfigureAwait(false);
+            grants.Add("client_id");
 
-            if (string.IsNullOrEmpty(json))
+            foreach (var grant in grants)
             {
-                _logger.LogWarning("[CDP Auth] Empty response from CDP auth. Check Docker container '{Container}' is running.",
-                    _dockerContainerName);
-                return null;
+                for (int offset = 0; offset < BasicAuthTokens.Length; offset++)
+                {
+                    var index = (_basicAuthTokenIndex + offset) % BasicAuthTokens.Length;
+                    var deviceId = Guid.NewGuid().ToString();
+                    var headers = new Dictionary<string, string>
+                    {
+                        ["Authorization"] = $"Basic {BasicAuthTokens[index]}",
+                        ["Content-Type"] = "application/x-www-form-urlencoded"
+                    };
+
+                    string body;
+                    if (grant == "password")
+                    {
+                        _logger.LogDebug("[CDP Auth] Using password grant with configured credentials");
+                        body = $"grant_type=password&username={Uri.EscapeDataString(_username)}&password={Uri.EscapeDataString(_password)}"
+                             + $"&device_id={deviceId}&device_type=com.crunchyroll.android.google&scope=offline_access";
+                    }
+                    else
+                    {
+                        body = $"grant_type=client_id&device_id={deviceId}";
+                    }
+
+                    var json = await _flareSolverrClient.CdpFetchJsonAsync(
+                        _dockerContainerName,
+                        "/auth/v1/token",
+                        "POST",
+                        headers,
+                        body,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (string.IsNullOrEmpty(json))
+                    {
+                        _logger.LogWarning("[CDP Auth] Empty response from CDP auth. Check Docker container '{Container}' is running.",
+                            _dockerContainerName);
+                        return null;
+                    }
+
+                    // Client deactivated ("client_inactive") or grant not allowed for it — try the next client
+                    if (json.Contains("invalid_client") || json.Contains("unsupported_grant_type"))
+                    {
+                        var rejectPreview = json.Length > 500 ? json[..500] : json;
+                        _logger.LogDebug("[CDP Auth] Client rejected for grant {Grant}: {Error}", grant, rejectPreview);
+                        continue;
+                    }
+
+                    // Wrong username/password — no other client will help
+                    if (json.Contains("invalid_grant"))
+                    {
+                        _logger.LogError("[CDP Auth] Crunchyroll Login Failed: Invalid Credentials. Please check your Email and Password in the plugin configuration.");
+                        return null;
+                    }
+
+                    // Check for JS-level errors (e.g., fetch() threw, NetworkError, etc.)
+                    if (json.Contains("\"error\""))
+                    {
+                        var errPreview = json.Length > 500 ? json[..500] : json;
+                        _logger.LogWarning("[CDP Auth] CDP returned an error response: {Error}", errPreview);
+                        return null;
+                    }
+
+                    // Parse the auth response (now with relaxed required fields)
+                    var authResponse = JsonSerializer.Deserialize<CrunchyrollAuthResponse>(json);
+                    if (authResponse == null || string.IsNullOrEmpty(authResponse.AccessToken))
+                    {
+                        var jsonPreview = json.Length > 500 ? json[..500] : json;
+                        _logger.LogWarning("[CDP Auth] Invalid auth response (no access_token). Raw JSON: {Json}", jsonPreview);
+                        return null;
+                    }
+
+                    _basicAuthTokenIndex = index;
+                    _browserAccessToken = authResponse.AccessToken;
+                    _browserTokenExpiration = DateTime.UtcNow.AddSeconds(authResponse.ExpiresIn - 60);
+                    _logger.LogInformation("[CDP Auth] Successfully authenticated as {Mode}! Country: {Country}, Token: {TokenLen} chars",
+                        grant == "password" ? "User" : "Anonymous", authResponse.Country, authResponse.AccessToken.Length);
+
+                    return _browserAccessToken;
+                }
+
+                if (grant == "password")
+                {
+                    _passwordGrantUnavailable = true;
+                    _logger.LogWarning("[CDP Auth] Crunchyroll rejected the password grant for every known client. " +
+                                       "Falling back to anonymous access — public metadata still works, " +
+                                       "but premium-only titles will be unavailable.");
+                }
             }
 
-            // Check for JS-level errors (e.g., fetch() threw, NetworkError, etc.)
-            if (json.Contains("\"error\""))
-            {
-                var errPreview = json.Length > 500 ? json[..500] : json;
-                _logger.LogWarning("[CDP Auth] CDP returned an error response: {Error}", errPreview);
-                return null;
-            }
-
-            // Parse the auth response (now with relaxed required fields)
-            var authResponse = JsonSerializer.Deserialize<CrunchyrollAuthResponse>(json);
-            if (authResponse == null || string.IsNullOrEmpty(authResponse.AccessToken))
-            {
-                var jsonPreview = json.Length > 500 ? json[..500] : json;
-                _logger.LogWarning("[CDP Auth] Invalid auth response (no access_token). Raw JSON: {Json}", jsonPreview);
-                return null;
-            }
-
-            _browserAccessToken = authResponse.AccessToken;
-            _browserTokenExpiration = DateTime.UtcNow.AddSeconds(authResponse.ExpiresIn - 60);
-            _logger.LogInformation("[CDP Auth] Successfully authenticated! Country: {Country}, Token: {TokenLen} chars",
-                authResponse.Country, authResponse.AccessToken.Length);
-
-            return _browserAccessToken;
+            _logger.LogWarning("[CDP Auth] No client/grant combination was accepted.");
+            return null;
         }
         catch (Exception ex)
         {

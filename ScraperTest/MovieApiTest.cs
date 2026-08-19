@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 public class MovieApiTest
 {
     private const string BaseUrl = "https://www.crunchyroll.com";
-    private const string BasicAuthToken = "bmR0aTZicXlqcm9wNXZnZjF0dnU6elpIcS00SEJJVDlDb2FMcnBPREJjRVRCTUNHai1QNlg=";
+    private const string BasicAuthToken = "Y3Jfd2ViOg=="; // cr_web — base64 of "cr_web:"
 
     public static async Task RunMovieTest()
     {

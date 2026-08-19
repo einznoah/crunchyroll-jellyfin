@@ -30,7 +30,7 @@ using System.Threading.Tasks;
 public class MovieProviderConceptTest
 {
     private const string BaseUrl = "https://www.crunchyroll.com";
-    private const string BasicAuthToken = "bmR0aTZicXlqcm9wNXZnZjF0dnU6elpIcS00SEJJVDlDb2FMcnBPREJjRVRCTUNHai1QNlg=";
+    private const string BasicAuthToken = "Y3Jfd2ViOg=="; // cr_web — base64 of "cr_web:"
     private const int MappingSensitivity = 70;
     private const int L2MinScore = 25;         // Min L1 score to attempt L2 drill-down
     private const int L2SeasonMinScore = 25;   // Min combined season score for L2 match
