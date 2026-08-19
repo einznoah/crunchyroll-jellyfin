@@ -2,11 +2,18 @@
   {
     "guid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "name": "Crunchyroll Metadata",
-    "description": "Fetches anime metadata from Crunchyroll with intelligent season and episode mapping. Solves common issues with episode numbering across seasons and treats all seasons as part of the same series.",
+    "description": "Fetches anime metadata from Crunchyroll with intelligent season and episode mapping. Solves common issues with episode numbering across seasons and treats all seasons as part of the same series. Fork of ocnaibill/crunchyroll-jellyfin.",
     "overview": "Anime metadata provider with smart episode offset calculation",
-    "owner": "ocnaibill",
+    "owner": "einznoah",
     "category": "Metadata Provider",
     "versions": [
+      {
+        "version": "2.3.2.0",
+        "changelog": "🔐 Auth Fix: Crunchyroll deactivated the hardcoded Android TV OAuth client, so every token request failed with 401 auth.obtain_access_token.client_inactive and all metadata lookups stopped working. The plugin now carries an ordered list of clients (cr_web first) and tries each grant against each client, remembering the one that works.\n\n⚠️ Login note: no public Crunchyroll client accepts the password grant any more. Configured credentials are attempted first, then the plugin falls back to anonymous access, which still serves all public metadata. Wrong credentials are still reported as an error instead of being silently downgraded.\n\n🔧 Same client/grant fallback applied to the CDP/FlareSolverr auth path, which previously used the same dead client. Cloudflare 403/429 handling and the FlareSolverr cookie retry are unchanged.",
+        "checksum": "00000000000000000000000000000000",
+        "timestamp": "2026-08-19T00:00:00Z",
+        "sourceUrl": "https://github.com/einznoah/crunchyroll-jellyfin/releases/download/v2.3.2.0/Jellyfin.Plugin.Crunchyroll.zip"
+      },
       {
         "version": "2.3.1.0",
         "changelog": "🔐 CDP Auth Overhaul: Password grant support — the plugin now uses your configured Crunchyroll credentials when authenticating via Chrome DevTools Protocol (previously always anonymous). Fixed JsonException crash when API returns tokens without scope/country fields (relaxed required fields in auth model). Added missing 'scope' field to CDP auth JavaScript. Enhanced error logging with 500-char JSON preview and JS-level error detection.\n\n🐛 Jujutsu Kaisen S3 Mapping: Regex-based detection for irregular season bumps — 'Culling Game'/'Jogo do Abate' → Season 3, 'Shibuya'/'Hidden Inventory'/'Inventário' → Season 2. Fixes episodes failing to match when Crunchyroll's season_sequence_number doesn't align with actual season order.\n\n🔧 Manifest: Removed broken v2.3.0.1 entry pointing to non-existent release ZIP (fixes installation failure #10).\n\n📊 Diagnostics: Episode and season mapping logs upgraded from Debug to Information level for easier troubleshooting. Auth error logs now indicate which grant type was used (anonymous vs password).\n\n🛠️ Build: Fixed ScraperTest CI failures — added missing source files and removed duplicate Main() entry point.",

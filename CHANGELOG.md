@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.3.2.0] - 2026-08-19
+
+### 🐛 Bug Fixes
+
+- **Deactivated OAuth client broke all metadata**: Crunchyroll deactivated the hardcoded Android TV client (`ndti6bqyjrop5vgf1tvu`), so every token request returned `401 auth.obtain_access_token.client_inactive` / `invalid_client`. Both the direct HTTP path and the CDP/FlareSolverr path used that single constant with no fallback, so every series, season and episode lookup failed.
+- **Client fallback**: `BasicAuthToken` is now an ordered list (`cr_web` → legacy web client → old Android TV client). Each grant (`refresh_token`, `password`, `client_id`) is tried against every client, and the one that authenticates is remembered for later calls. `invalid_client` and `unsupported_grant_type` mean "try the next client" instead of failing outright.
+- **Password grant fallback**: no public Crunchyroll client accepts the password grant any more. After all clients reject it, the plugin records that and falls back to the anonymous grant, which still serves all public metadata. Wrong credentials (`invalid_grant`) remain a hard error rather than a silent downgrade.
+- **CDP auth path**: same client/grant fallback applied to `TryAuthenticateViaFlareSolverrAsync`, which previously used the same dead client.
+
+### 🏗️ Architecture
+
+- Extracted `TryAuthenticateWithClientAsync` (one client + one grant) and `HandleCloudflareBlockAsync` out of `TryAuthenticateAsync`. Cloudflare 403/429 detection and the FlareSolverr cookie retry are unchanged.
+
+### 📦 Fork
+
+- This release is published from [einznoah/crunchyroll-jellyfin](https://github.com/einznoah/crunchyroll-jellyfin), a fork of [ocnaibill/crunchyroll-jellyfin](https://github.com/ocnaibill/crunchyroll-jellyfin).
+
 ## [2.2.0.0] - 2026-02-09
 
 ### 🚀 New Features

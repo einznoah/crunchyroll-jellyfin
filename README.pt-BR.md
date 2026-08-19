@@ -76,7 +76,7 @@ Este plugin utiliza **cálculo automático de offset de episódios**, garantindo
 3. Clique em `+` e adicione a seguinte URL de manifesto:
 
 ```
-https://raw.githubusercontent.com/ocnaibill/crunchyroll-jellyfin/main/manifest.json
+https://raw.githubusercontent.com/einznoah/crunchyroll-jellyfin/main/manifest.json
 ```
 
 4. Salve e vá para `Dashboard > Plugins > Catalog`
@@ -114,7 +114,7 @@ docker restart jellyfin
 ### Método 3: Compilando a Partir do Código Fonte
 
 ```bash
-git clone https://github.com/ocnaibill/crunchyroll-jellyfin.git
+git clone https://github.com/einznoah/crunchyroll-jellyfin.git
 cd crunchyroll-jellyfin
 dotnet build -c Release
 ```
