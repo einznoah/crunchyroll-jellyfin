@@ -10,8 +10,8 @@
       {
         "version": "2.3.2.0",
         "changelog": "🔐 Auth Fix: Crunchyroll deactivated the hardcoded Android TV OAuth client, so every token request failed with 401 auth.obtain_access_token.client_inactive and all metadata lookups stopped working. The plugin now carries an ordered list of clients (cr_web first) and tries each grant against each client, remembering the one that works.\n\n⚠️ Login note: no public Crunchyroll client accepts the password grant any more. Configured credentials are attempted first, then the plugin falls back to anonymous access, which still serves all public metadata. Wrong credentials are still reported as an error instead of being silently downgraded.\n\n🔧 Same client/grant fallback applied to the CDP/FlareSolverr auth path, which previously used the same dead client. Cloudflare 403/429 handling and the FlareSolverr cookie retry are unchanged.",
-        "checksum": "00000000000000000000000000000000",
-        "timestamp": "2026-08-19T00:00:00Z",
+        "checksum": "2cbf12c1aa5ee84bba75ebac3524bd69",
+        "timestamp": "2026-08-19T18:34:50Z",
         "sourceUrl": "https://github.com/einznoah/crunchyroll-jellyfin/releases/download/v2.3.2.0/Jellyfin.Plugin.Crunchyroll.zip"
       },
       {
